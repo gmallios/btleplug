@@ -130,6 +130,10 @@ pub enum CentralDelegateEvent {
         characteristic_uuid: Uuid,
         descriptor_uuid: Uuid,
     },
+    NameUpdated {
+        peripheral_uuid: Uuid,
+        name: String,
+    },
 }
 
 impl Debug for CentralDelegateEvent {
@@ -289,13 +293,22 @@ impl Debug for CentralDelegateEvent {
                 .field("characteristic_uuid", characteristic_uuid)
                 .field("descriptor_uuid", descriptor_uuid)
                 .finish(),
+            CentralDelegateEvent::NameUpdated {
+                peripheral_uuid,
+                name,
+            } => f
+                .debug_struct("NameUpdated")
+                .field("peripheral_uuid", peripheral_uuid)
+                .field("name", name)
+                .finish(),
         }
     }
 }
 
 pub mod CentralDelegate {
     use crate::corebluetooth::{
-        framework::ns::number_as_i64, utils::core_bluetooth::descriptor_debug,
+        central_delegate::CentralDelegate::cb::peripheral_name, framework::ns::number_as_i64,
+        utils::core_bluetooth::descriptor_debug,
     };
 
     use super::*;
@@ -371,6 +384,7 @@ pub mod CentralDelegate {
                                 delegate_peripheral_didupdatevaluefordescriptor_error as extern fn(&mut Object, Sel, id, id, id));
                 decl.add_method(sel!(peripheral:didWriteValueForDescriptor:error:),
                                 delegate_peripheral_didwritevaluefordescriptor_error as extern fn(&mut Object, Sel, id, id, id));
+                decl.add_method(sel!(peripheralDidUpdateName:), delegate_peripheral_didupdatename as extern fn(&mut Object, Sel, id));
             }
 
             decl.register();
@@ -509,7 +523,7 @@ pub mod CentralDelegate {
     extern "C" fn delegate_centralmanager_diddiscoverperipheral_advertisementdata_rssi(
         delegate: &mut Object,
         _cmd: Sel,
-        _central: id,
+        central: id,
         peripheral: id,
         adv_data: id,
         rssi: id,
@@ -526,6 +540,8 @@ pub mod CentralDelegate {
                 cbperipheral: held_peripheral,
             },
         );
+
+        cb::centralmanager_connectperipheral(central, peripheral);
 
         let rssi_value = number_as_i64(rssi) as i16;
 
@@ -899,6 +915,26 @@ pub mod CentralDelegate {
                     service_uuid: cbuuid_to_uuid(cb::attribute_uuid(service)),
                     characteristic_uuid: cbuuid_to_uuid(cb::attribute_uuid(characteristic)),
                     descriptor_uuid: cbuuid_to_uuid(cb::attribute_uuid(descriptor)),
+                },
+            );
+        }
+    }
+
+    extern "C" fn delegate_peripheral_didupdatename(
+        delegate: &mut Object,
+        _cmd: Sel,
+        peripheral: id,
+    ) {
+        trace!(
+            "delegate_peripheral_didupdatename {}",
+            peripheral_debug(peripheral)
+        );
+        if let Some(name) = nsstring_to_string(peripheral_name(peripheral)) {
+            send_delegate_event(
+                delegate,
+                CentralDelegateEvent::NameUpdated {
+                    peripheral_uuid: nsuuid_to_uuid(cb::peer_identifier(peripheral)),
+                    name,
                 },
             );
         }
