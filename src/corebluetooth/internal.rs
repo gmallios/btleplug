@@ -176,6 +176,7 @@ struct CBPeripheral {
     pub event_sender: Sender<CBPeripheralEvent>,
     pub disconnected_future_state: Option<CoreBluetoothReplyStateShared>,
     pub connected_future_state: Option<CoreBluetoothReplyStateShared>,
+    pub discovered_services_future_state: Option<CoreBluetoothReplyStateShared>,
 }
 
 impl Debug for CBPeripheral {
@@ -204,6 +205,7 @@ impl CBPeripheral {
             event_sender,
             connected_future_state: None,
             disconnected_future_state: None,
+            discovered_services_future_state: None,
         }
     }
 
@@ -271,8 +273,8 @@ impl CBPeripheral {
         // characteristic info in it.
         if !self.services.values().any(|service| !service.discovered) {
             if self.connected_future_state.is_none() {
-                // TODO: This is triggered by connecting upon discovery. 
-                // I think we should implement discover_services and not require services 
+                // TODO: This is triggered by connecting upon discovery.
+                // I think we should implement discover_services and not require services
                 // and characteristics to be discovered before declaring a device as connected.
 
                 // panic!("We should still have a future at this point!");
@@ -365,6 +367,10 @@ pub enum CoreBluetoothMessage {
         future: CoreBluetoothReplyStateShared,
     },
     DisconnectDevice {
+        peripheral_uuid: Uuid,
+        future: CoreBluetoothReplyStateShared,
+    },
+    DiscoverServices {
         peripheral_uuid: Uuid,
         future: CoreBluetoothReplyStateShared,
     },
@@ -548,7 +554,10 @@ impl CoreBluetoothInternal {
         for id in service_map.keys() {
             trace!("{}", id);
         }
+        println!("Found services for peripheral {}:", peripheral_uuid);
         if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            println!("Services: {:?}", service_map.keys());
+
             let services = service_map
                 .into_iter()
                 .map(|(service_uuid, cbservice)| {
@@ -563,6 +572,15 @@ impl CoreBluetoothInternal {
                 })
                 .collect();
             p.services = services;
+            if let Some(fut) = self
+                .peripherals
+                .get_mut(&peripheral_uuid)
+                .unwrap()
+                .discovered_services_future_state
+                .take()
+            {
+                fut.lock().unwrap().set_reply(CoreBluetoothReply::Ok);
+            }
         }
     }
 
@@ -787,6 +805,15 @@ impl CoreBluetoothInternal {
             trace!("Disconnecting peripheral!");
             p.disconnected_future_state = Some(fut);
             cb::centralmanager_cancelperipheralconnection(*self.manager, *p.peripheral);
+        }
+    }
+
+    fn discover_services(&mut self, peripheral_uuid: Uuid, fut: CoreBluetoothReplyStateShared) {
+        trace!("Trying to discover services!");
+        if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            trace!("Discovering services!");
+            p.discovered_services_future_state = Some(fut);
+            cb::peripheral_discoverservices(*p.peripheral);
         }
     }
 
@@ -1138,6 +1165,7 @@ impl CoreBluetoothInternal {
                         data,
                         future,
                     } => self.write_descriptor_value(peripheral_uuid, service_uuid, characteristic_uuid, descriptor_uuid, data, future),
+                    CoreBluetoothMessage::DiscoverServices{peripheral_uuid, future} => self.discover_services(peripheral_uuid, future),
                 };
             }
         }

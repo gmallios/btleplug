@@ -172,7 +172,7 @@ impl Peripheral {
     pub(super) fn update_name(&self, name: &str) {
         if name.len() == 0 {
             return;
-        } 
+        }
         self.shared.properties.lock().unwrap().local_name = Some(name.to_string());
     }
 }
@@ -281,6 +281,22 @@ impl api::Peripheral for Peripheral {
 
     async fn discover_services(&self) -> Result<()> {
         // TODO: Actually discover on this, rather than on connection
+        let fut = CoreBluetoothReplyFuture::default();
+        self.shared
+            .message_sender
+            .to_owned()
+            .send(CoreBluetoothMessage::DiscoverServices {
+                peripheral_uuid: self.shared.uuid,
+                future: fut.get_state_clone(),
+            })
+            .await?;
+        match fut.await {
+            CoreBluetoothReply::Ok => {
+                trace!("Services discovered!");
+                self.shared.emit_event(CentralEvent::DeviceUpdated(self.shared.uuid.into()));
+            },
+            _ => error!("Shouldn't get anything but Ok!"),
+        }
         Ok(())
     }
 
