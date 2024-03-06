@@ -239,24 +239,24 @@ impl CBPeripheral {
             .into_iter()
             .map(|(descriptor_uuid, descriptor)| (descriptor_uuid, CBDescriptor::new(descriptor)))
             .collect();
-        let service = self
-            .services
-            .get_mut(&service_uuid)
-            .expect("Got descriptors for a service we don't know about");
-        let characteristic = service
-            .characteristics
-            .get_mut(&characteristic_uuid)
-            .expect("Got descriptors for a characteristic we don't know about");
-        characteristic.descriptors = descriptors;
-        characteristic.discovered = true;
+        match self.services.get_mut(&service_uuid) {
+            Some(service) => match service.characteristics.get_mut(&characteristic_uuid) {
+                Some(characteristic) => {
+                    characteristic.descriptors = descriptors;
+                    characteristic.discovered = true;
 
-        if !service
-            .characteristics
-            .values()
-            .any(|characteristic| !characteristic.discovered)
-        {
-            service.discovered = true;
-            self.check_discovered()
+                    if !service
+                        .characteristics
+                        .values()
+                        .any(|characteristic| !characteristic.discovered)
+                    {
+                        service.discovered = true;
+                        self.check_discovered();
+                    }
+                }
+                None => warn!("Got descriptors for a characteristic we don't know about"),
+            },
+            None => warn!("Got descriptors for a service we don't know about"),
         }
     }
 
@@ -271,7 +271,12 @@ impl CBPeripheral {
         // characteristic info in it.
         if !self.services.values().any(|service| !service.discovered) {
             if self.connected_future_state.is_none() {
-                panic!("We should still have a future at this point!");
+                // TODO: This is triggered by connecting upon discovery. 
+                // I think we should implement discover_services and not require services 
+                // and characteristics to be discovered before declaring a device as connected.
+
+                // panic!("We should still have a future at this point!");
+                return;
             }
             let services = self
                 .services
@@ -999,6 +1004,17 @@ impl CoreBluetoothInternal {
         }
     }
 
+    async fn on_name_updated(&mut self, peripheral_uuid: Uuid, name: String) {
+        if let Some(p) = self.peripherals.get_mut(&peripheral_uuid) {
+            trace!("Got name update event!");
+            self.dispatch_event(CoreBluetoothEvent::DeviceUpdated {
+                uuid: peripheral_uuid,
+                name,
+            })
+            .await;
+        }
+    }
+
     async fn wait_for_message(&mut self) {
         select! {
             delegate_msg = self.delegate_receiver.select_next_some() => {
@@ -1076,6 +1092,9 @@ impl CoreBluetoothInternal {
                         characteristic_uuid,
                         descriptor_uuid,
                     } => self.on_descriptor_written(peripheral_uuid, service_uuid, characteristic_uuid, descriptor_uuid),
+                    CentralDelegateEvent::NameUpdated{peripheral_uuid, name} => {
+                        self.on_name_updated(peripheral_uuid, name).await
+                    },
                 };
             }
             adapter_msg = self.message_receiver.select_next_some() => {
