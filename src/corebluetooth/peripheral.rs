@@ -170,6 +170,9 @@ impl Peripheral {
     }
 
     pub(super) fn update_name(&self, name: &str) {
+        if name.len() == 0 {
+            return;
+        } 
         self.shared.properties.lock().unwrap().local_name = Some(name.to_string());
     }
 }
